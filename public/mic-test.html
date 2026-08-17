@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mic Test - Gurbani Projector</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: white;
+        }
+        .status {
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            background: #2a2a2a;
+        }
+        button {
+            padding: 15px 30px;
+            font-size: 18px;
+            cursor: pointer;
+            background: #d4af37;
+            color: black;
+            border: none;
+            border-radius: 8px;
+            margin: 10px;
+        }
+        button:hover {
+            background: #f0c040;
+        }
+        .transcript {
+            background: #333;
+            padding: 15px;
+            margin: 10px 0;
+            border-left: 4px solid #d4af37;
+            min-height: 50px;
+        }
+        .log {
+            background: #1a1a1a;
+            padding: 10px;
+            margin: 10px 0;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #444;
+        }
+        .success { color: #4CAF50; }
+        .error { color: #f44336; }
+        .info { color: #2196F3; }
+    </style>
+</head>
+<body>
+    <h1>🎤 Microphone Test</h1>
+    
+    <div class="status">
+        <h2>Status: <span id="status">Not Started</span></h2>
+        <p id="statusDetail">Click "Start Test" to begin</p>
+    </div>
+
+    <button onclick="startTest()">Start Test</button>
+    <button onclick="stopTest()">Stop Test</button>
+    <button onclick="clearLogs()">Clear Logs</button>
+
+    <h3>Transcript:</h3>
+    <div class="transcript" id="transcript">Waiting for speech...</div>
+
+    <h3>Console Logs:</h3>
+    <div class="log" id="logs"></div>
+
+    <script>
+        let recognition;
+        let isListening = false;
+
+        function log(message, type = 'info') {
+            const logs = document.getElementById('logs');
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type;
+            logs.innerHTML += `<div class="${className}">[${timestamp}] ${message}</div>`;
+            logs.scrollTop = logs.scrollHeight;
+            console.log(message);
+        }
+
+        function updateStatus(status, detail) {
+            document.getElementById('status').textContent = status;
+            document.getElementById('statusDetail').textContent = detail;
+        }
+
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
+        }
+
+        function startTest() {
+            log('🎙️ Starting microphone test...', 'info');
+            
+            // Check browser support
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                log('❌ Browser does not support speech recognition!', 'error');
+                updateStatus('Error', 'Browser not supported');
+                return;
+            }
+
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-IN';
+
+            log('✅ Speech recognition initialized', 'success');
+            log('📝 Language: en-IN (English India)', 'info');
+            log('🔄 Continuous: true', 'info');
+
+            recognition.onstart = () => {
+                isListening = true;
+                log('🎤 Microphone is listening...', 'success');
+                updateStatus('Listening', 'Speak now!');
+            };
+
+            recognition.onresult = (event) => {
+                let transcript = '';
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    transcript += event.results[i][0].transcript;
+                }
+                
+                document.getElementById('transcript').textContent = transcript;
+                log(`📝 Captured: "${transcript}"`, 'success');
+            };
+
+            recognition.onerror = (event) => {
+                log(`❌ Error: ${event.error}`, 'error');
+                updateStatus('Error', event.error);
+            };
+
+            recognition.onend = () => {
+                if (isListening) {
+                    log('🔄 Recognition ended, restarting...', 'info');
+                    recognition.start();
+                } else {
+                    log('⏹️ Recognition stopped', 'info');
+                    updateStatus('Stopped', 'Click "Start Test" to begin again');
+                }
+            };
+
+            try {
+                recognition.start();
+                log('🚀 Recognition started successfully', 'success');
+            } catch (error) {
+                log(`❌ Failed to start: ${error.message}`, 'error');
+                updateStatus('Error', error.message);
+            }
+        }
+
+        function stopTest() {
+            if (recognition) {
+                isListening = false;
+                recognition.stop();
+                log('⏹️ Stopping recognition...', 'info');
+                updateStatus('Stopped', 'Test stopped');
+            }
+        }
+
+        // Initial log
+        log('🔍 Microphone test page loaded', 'info');
+        log('💡 Click "Start Test" to check if your microphone works', 'info');
+    </script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+{
+  "name": "gurbani-projector",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@reduxjs/toolkit": "^2.12.0",
+    "@sttm/banidb": "^3.0.1",
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.38.0",
+    "axios": "^1.13.5",
+    "fuse.js": "^7.5.0",
+    "mongoose": "^9.1.6",
+    "next": "16.1.6",
+    "pino": "^9.5.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-redux": "^9.3.0",
+    "react-speech-recognition": "^4.0.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/react-speech-recognition": "^3.9.6",
+    "babel-plugin-react-compiler": "1.0.0",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "tailwindcss": "^4",
+    "typescript": "5.9.3"
+  }
+}
