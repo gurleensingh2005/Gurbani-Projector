@@ -55,7 +55,21 @@ export const SEARCH_CONFIG = {
 
   // STT debouncing (src/hooks/useGurbaniProjector.ts)
   MIN_QUERY_WORDS_DISCOVERY: 5,
+  /**
+   * When a shabad is already loaded, wait for this many words before firing a
+   * remote search (locked-shabad line-tracking). Unchanged from original.
+   */
   MIN_QUERY_WORDS_JUMP_SHABAD: 6,
+  /** Maximum continuous words spoken on initialization before forcing immediate search without waiting for speech pause. */
+  MAX_CONTINUOUS_WORDS_FORCE_SEARCH: 8,
+  /**
+   * Cold-start ONLY: minimum words in the rolling window before the continuous
+   * speech path fires a remote search. The speaker must say 8 words without
+   * pausing before we search — prevents premature first-word matches.
+   * Has no effect once a shabad is locked (uses MIN_QUERY_WORDS_JUMP_SHABAD).
+   * A long silence with fewer words still triggers via the cold-start silence timer.
+   */
+  MIN_QUERY_WORDS_DISCOVERY_CONTINUOUS: 8,
   MAX_CONSECUTIVE_MISSES_BEFORE_DISCOVERY: 3,
   DEBOUNCE_FAST_MS: 600,
   DEBOUNCE_SLOW_MS: 1500,
@@ -63,6 +77,21 @@ export const SEARCH_CONFIG = {
   PATIENCE_AFTER_MATCH_MS: 200,
   ALAAP_PROTECTION_TIMEOUT_MS: 12_000,
   ROLLING_WINDOW_WORDS: 8,
+  /** Silence duration (in ms) after speaker stops speaking before resetting STT text. */
+  SPEECH_SILENCE_RESET_MS: 6_000,
+  /**
+   * When the shabad is locked and only 1 stray word lands on the pill,
+   * clear it quickly so it can't pollute the next line match.
+   */
+  STRAY_WORD_FAST_CLEAR_MS: 1500,
+  /**
+   * Number of consecutive STT phrase matches required before committing a line
+   * jump inside a cached shabad. Prevents a single ambiguous word (e.g. "tere")
+   * from instantly moving to the wrong line. The same line must be the top match
+   * this many times in a row before the display updates.
+   * 1 = jump immediately (old behaviour), 2-3 = confirmation gate.
+   */
+  MIN_LINE_MATCH_CONFIRMATIONS: 3,
 
   // Input validation (src/app/api/search/route.ts)
   MAX_QUERY_LENGTH: 500,
@@ -96,4 +125,23 @@ export const SEARCH_CONFIG = {
   SEQUENTIAL_NEXT_LINE_BONUS: 0.15,
   SEQUENTIAL_SKIP_LINE_BONUS: 0.08,
   PHONETIC_MATCH_BONUS: 0.08,
+  /**
+   * Per-step decay applied to each line that is MORE than 2 ahead of the current
+   * line. Prevents ambiguous shared words (e.g. "tere") on distant lines from
+   * outscoring the correct sequential candidate.
+   * Example: dist=3 → penalty × 1; dist=4 → penalty × 2
+   */
+  SEQUENTIAL_FAR_JUMP_PENALTY: 0.12,
+  /**
+   * Flat penalty for any match that would move BACKWARD in the shabad.
+   * We should never regress to an earlier line while tracking inside a cached shabad.
+   */
+  SEQUENTIAL_BACKWARD_PENALTY: 0.20,
+  /**
+   * Minimum number of spoken words required for Fuse line-matching to run inside
+   * a locked (cached) shabad. Short fragments like "tere" (1 word) or "sant tere"
+   * (2 words) are too ambiguous when many lines share the same word — hold current
+   * line until a longer phrase arrives.
+   */
+  MIN_LOCKED_FUSE_QUERY_WORDS: 3,
 } as const;

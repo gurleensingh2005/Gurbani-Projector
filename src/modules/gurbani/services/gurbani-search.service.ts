@@ -15,6 +15,7 @@ import {
   clampContextLines,
   joinContextQuery,
   rankLinesWithFuse,
+  rankAllLinesWithFuse,
   rankWindowsWithFuseRaw,
   scoreFirstLetters,
   normalizeNakedGurmukhi,
@@ -311,6 +312,99 @@ export const evaluateLockedShabad = (
   }
 
   const lineDocs = buildLineDocsFromShabads(shabadsArray);
+
+  // Require at least MIN_LOCKED_FUSE_QUERY_WORDS words before running Fuse.
+  // A single word like "tere" is far too ambiguous — many lines share it.
+  // Hold the current line until the speaker gives us a long-enough phrase.
+  const queryWordCount = query.trim().split(/\s+/).filter(Boolean).length;
+  if (queryWordCount < SEARCH_CONFIG.MIN_LOCKED_FUSE_QUERY_WORDS) {
+    logger.info(
+      { event: "search_locked_fuse_skipped", queryWordCount, minRequired: SEARCH_CONFIG.MIN_LOCKED_FUSE_QUERY_WORDS },
+      "Query too short for locked-shabad Fuse — holding current line"
+    );
+    return null;
+  }
+
+  // When we have a known position, score ALL candidates so the sequential
+  // bonus/penalty can overturn the raw Fuse winner (e.g. two lines sharing
+  // the same word like "tere" — the structurally-next line must win).
+  const allFuseHits = activeIndex >= 0
+    ? rankAllLinesWithFuse(query, lineDocs, SEARCH_CONFIG.FUSE_MIN_CONFIDENCE)
+    : null;
+
+  // Build per-candidate contextual window check (done once, used below)
+  let ctxQuery: string | null = null;
+  let windowDocs = null;
+  if (contextLines.length >= SEARCH_CONFIG.CONTEXT_WINDOW_MIN) {
+    windowDocs = buildWindowDocs(shabadsArray, contextLines.length);
+    ctxQuery = joinContextQuery(contextLines);
+  }
+
+  if (allFuseHits && allFuseHits.length > 0) {
+    // Re-rank every candidate with positional bonuses AND distance penalty.
+    let bestScore = -1;
+    let bestHit = allFuseHits[0];
+
+    for (const hit of allFuseHits) {
+      let s = hit.confidence;
+      const dist = hit.doc.lineIndex - activeIndex; // positive = forward
+
+      if (dist === 1) {
+        // Ideal: the very next line
+        s = Math.min(1.0, s + SEARCH_CONFIG.SEQUENTIAL_NEXT_LINE_BONUS);
+      } else if (dist === 2) {
+        // Allowable skip (rahao etc.)
+        s = Math.min(1.0, s + SEARCH_CONFIG.SEQUENTIAL_SKIP_LINE_BONUS);
+      } else if (dist > 2) {
+        // Far-forward jump — apply decay so ambiguous lines can't steal the match
+        s = Math.max(0, s - SEARCH_CONFIG.SEQUENTIAL_FAR_JUMP_PENALTY * (dist - 2));
+      } else if (dist < 0) {
+        // Backward — punish hard so we never regress inside the same shabad
+        s = Math.max(0, s - SEARCH_CONFIG.SEQUENTIAL_BACKWARD_PENALTY);
+      }
+      // dist === 0: current line re-spoken, no adjustment
+
+      // Context-window alignment bonus
+      if (ctxQuery && windowDocs) {
+        const windowHit = rankWindowsWithFuseRaw(ctxQuery, windowDocs);
+        if (
+          windowHit &&
+          windowHit.doc.shabadId === hit.doc.shabadId &&
+          windowHit.doc.endLineIndex === hit.doc.lineIndex
+        ) {
+          s = Math.min(1, s + SEARCH_CONFIG.CONTEXT_ALIGN_BONUS);
+        }
+      }
+
+      if (s > bestScore) {
+        bestScore = s;
+        bestHit = hit;
+      }
+    }
+
+    if (bestScore < SEARCH_CONFIG.MIN_CONFIDENCE) return null;
+
+    const shabad = findShabadById(shabadsArray, bestHit.doc.shabadId);
+    if (!shabad) return null;
+
+    logger.info(
+      {
+        event: "search_fuse_match_ranked",
+        fuseScore: bestHit.fuseScore,
+        confidence: bestScore,
+        phase: "locked_shabad",
+        lineIndex: bestHit.doc.lineIndex,
+        activeIndex,
+        candidatesConsidered: allFuseHits.length,
+        shabadId: bestHit.doc.shabadId,
+      },
+      "Fuse line match inside locked shabad (positional re-rank)"
+    );
+
+    return toMatchResult(shabad, bestHit.doc.lineIndex, bestScore);
+  }
+
+  // No known position — fall back to top-1 Fuse hit as before
   const fuseHit = rankLinesWithFuse(query, lineDocs);
   if (!fuseHit) return null;
 
@@ -319,17 +413,7 @@ export const evaluateLockedShabad = (
 
   let score = fuseHit.confidence;
 
-  if (activeIndex >= 0) {
-    if (fuseHit.doc.lineIndex === activeIndex + 1) {
-      score = Math.min(1.0, score + SEARCH_CONFIG.SEQUENTIAL_NEXT_LINE_BONUS);
-    } else if (fuseHit.doc.lineIndex === activeIndex + 2) {
-      score = Math.min(1.0, score + SEARCH_CONFIG.SEQUENTIAL_SKIP_LINE_BONUS);
-    }
-  }
-
-  if (contextLines.length >= SEARCH_CONFIG.CONTEXT_WINDOW_MIN) {
-    const windowDocs = buildWindowDocs(shabadsArray, contextLines.length);
-    const ctxQuery = joinContextQuery(contextLines);
+  if (ctxQuery && windowDocs) {
     const windowHit = rankWindowsWithFuseRaw(ctxQuery, windowDocs);
     if (
       windowHit &&
@@ -531,6 +615,8 @@ export const executeSearch = async (
   let bestMatch: MatchResult | null = null;
   let lockedMatch: MatchResult | null = null;
   let phase: "redis_shabad" | "mongo_rehydrate" | "discovery" = "discovery";
+  /** True when the full shabad was loaded from Redis L1/L2 — skip global Mongo discovery. */
+  let cacheIsLocked = false;
   const hasShabadContext =
     currentShabadId !== undefined && currentShabadId !== null && currentShabadId !== "";
 
@@ -547,10 +633,11 @@ export const executeSearch = async (
     const cached = await getCachedShabad(shabadKey);
     if (cached) {
       phase = "redis_shabad";
+      cacheIsLocked = true; // Shabad is in cache — lock, no Mongo global discovery
       lockedPayload = cached;
       logger.info(
         { event: "search_redis_hit", shabadId: cached.shabadId },
-        "Scrolling: full shabad loaded from Redis"
+        "Scrolling: full shabad loaded from Redis — cache locked"
       );
     } else {
       // Redis miss / TTL — fetch the same shabad by id (not global text search)
@@ -601,8 +688,10 @@ export const executeSearch = async (
       );
       if (!lockedMatch) {
         logger.info(
-          { event: "search_locked_line_miss", shabadId: lockedPayload.shabadId },
-          "Line not in current shabad — falling back to global Mongo discovery"
+          { event: "search_locked_line_miss", shabadId: lockedPayload.shabadId, cacheIsLocked },
+          cacheIsLocked
+            ? "Line not in cached shabad — holding (cache locked, Mongo discovery suppressed)"
+            : "Line not in current shabad — falling back to global Mongo discovery"
         );
       }
     }
@@ -622,8 +711,9 @@ export const executeSearch = async (
     bestMatch = lockedMatch;
   }
 
-  if (!bestMatch && sanitizedSearchText && canJumpToNewShabad) {
+  if (!bestMatch && sanitizedSearchText && canJumpToNewShabad && !cacheIsLocked) {
     // ── GLOBAL DISCOVERY: naya shabad Redis mein nahi → Mongo se dhundo ──
+    // (Skipped when cacheIsLocked — shabad was in Redis, hold current shabad)
     phase = "discovery";
     const searchText = buildBroadMongoSearchText(sanitizedSearchText);
     if (searchText) {

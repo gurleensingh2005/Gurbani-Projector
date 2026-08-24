@@ -233,8 +233,10 @@ export const attemptLocalMatch = (
     const qAcrLen = getQueryAcronym(raw).length;
     const queryWordCount = raw.split(/\s+/).filter(Boolean).length;
 
-    // Single-word queries must never trigger local line changes
-    if (queryWordCount < 2 && qAcrLen < 2) return null;
+    // Require at least 3 words or 3 acronym letters before allowing ANY line change.
+    // "tere" (1 word) or "sant tere" (2 words) are too ambiguous when multiple
+    // lines share the same word — hold the current line.
+    if (queryWordCount < 3 && qAcrLen < 3) return null;
 
     const substantiveQuery = qAcrLen >= 3 || queryWordCount >= 3;
 
@@ -244,9 +246,9 @@ export const attemptLocalMatch = (
         const line = lines[idx];
         const forwardDistance = getForwardDistance(idx);
 
-        // Short queries (<3 words/letters) can only progress to next sequential lines
+        // Non-substantive queries (barely 3 words) can only progress to the very next line
         if (!substantiveQuery && activeIndex >= 0) {
-            if (forwardDistance > 2) continue;
+            if (forwardDistance > 1) continue;
         }
 
         const proximityBonus = activeIndex >= 0
@@ -298,7 +300,7 @@ export const attemptLocalMatch = (
         },
     ]);
 
-    const fuseHits = rankAllLinesWithFuse(raw, lineDocs, 0.45);
+    const fuseHits = rankAllLinesWithFuse(raw, lineDocs, SEARCH_CONFIG.FUSE_MIN_CONFIDENCE);
     let fuseBest: any = null;
     let fuseMax = maxScore;
 
@@ -309,8 +311,9 @@ export const attemptLocalMatch = (
 
         const forwardDistance = getForwardDistance(idx);
 
+        // Mirror the acronym section: non-substantive → only next line allowed
         if (!substantiveQuery && activeIndex >= 0) {
-            if (forwardDistance > 2) continue;
+            if (forwardDistance > 1) continue;
         }
 
         const proximityBonus = activeIndex >= 0
