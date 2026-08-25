@@ -16,5 +16,7 @@ export {
     cleanTranscript,
     isProbableNoise,
     isLikelyShabadHeadingLine,
-    attemptLocalMatch
+    attemptLocalMatch,
+    sanitizeGurmukhiText,
 } from "@/shared/utils/gurbani-text-normalizer";
+

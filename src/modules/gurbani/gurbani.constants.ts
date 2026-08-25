@@ -62,14 +62,7 @@ export const SEARCH_CONFIG = {
   MIN_QUERY_WORDS_JUMP_SHABAD: 6,
   /** Maximum continuous words spoken on initialization before forcing immediate search without waiting for speech pause. */
   MAX_CONTINUOUS_WORDS_FORCE_SEARCH: 8,
-  /**
-   * Cold-start ONLY: minimum words in the rolling window before the continuous
-   * speech path fires a remote search. The speaker must say 8 words without
-   * pausing before we search — prevents premature first-word matches.
-   * Has no effect once a shabad is locked (uses MIN_QUERY_WORDS_JUMP_SHABAD).
-   * A long silence with fewer words still triggers via the cold-start silence timer.
-   */
-  MIN_QUERY_WORDS_DISCOVERY_CONTINUOUS: 8,
+  MIN_QUERY_WORDS_DISCOVERY_CONTINUOUS: 5,
   MAX_CONSECUTIVE_MISSES_BEFORE_DISCOVERY: 3,
   DEBOUNCE_FAST_MS: 600,
   DEBOUNCE_SLOW_MS: 1500,
@@ -84,6 +77,31 @@ export const SEARCH_CONFIG = {
    * clear it quickly so it can't pollute the next line match.
    */
   STRAY_WORD_FAST_CLEAR_MS: 1500,
+
+  /**
+   * Tempo detection — auto-adjusts pill-clearing speed to the Raagi's pace.
+   *
+   * Words-per-second (WPS) measured as a rolling average over the last N STT
+   * phrases. Below SLOW_MAX_WPS → Slow; above FAST_MIN_WPS → Fast; else Medium.
+   *
+   * Each bucket maps to:
+   *  - SILENCE_RESET_MS   : how long after silence before the pill resets
+   *  - STRAY_CLEAR_MS     : fast-clear timeout for single stray words
+   *
+   * Medium values intentionally match the top-level constants so the
+   * default behaviour is unchanged.
+   */
+  TEMPO_CONFIG: {
+    /** Rolling-average window: number of STT phrases to measure over. */
+    ROLLING_PHRASES: 6,
+    /** WPS threshold — below this the Raagi is classified as Slow. */
+    SLOW_MAX_WPS: 0.8,
+    /** WPS threshold — above this the Raagi is classified as Fast. */
+    FAST_MIN_WPS: 1.6,
+    SLOW: { SILENCE_RESET_MS: 10_000, STRAY_CLEAR_MS: 3_000 },
+    MEDIUM: { SILENCE_RESET_MS: 6_000, STRAY_CLEAR_MS: 1_500 },
+    FAST: { SILENCE_RESET_MS: 3_500, STRAY_CLEAR_MS: 1000 },   
+  } as const,
   /**
    * Number of consecutive STT phrase matches required before committing a line
    * jump inside a cached shabad. Prevents a single ambiguous word (e.g. "tere")

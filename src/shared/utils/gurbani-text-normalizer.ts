@@ -119,6 +119,33 @@ export const getAcronym = (text: string): string => {
         .join("");
 };
 
+/**
+ * Sanitizes a raw gurmukhi string from BaniDB before storing to MongoDB.
+ *
+ * Retains:
+ *  - Gurmukhi Unicode block (U+0A00–U+0A7F), including ੴ (Ik Onkar, U+0A74)
+ *  - Gurmukhi digits (੦–੯ are already in the block above)
+ *  - Danda / Double Danda (।॥ U+0964–U+0965)
+ *  - Pipe separator (|) and double-pipe (||) used in SGGS lines
+ *  - Whitespace (spaces, tabs, newlines — normalised to single space)
+ *
+ * Strips:
+ *  - Emoji and decorative symbols (e.g. ❁ U+2741)
+ *  - ASCII/Latin characters and parenthetical annotations like (੫੬) or (Pause)
+ *  - Any character outside the allowed sets above
+ *
+ * Returns empty string if nothing valid remains after sanitization.
+ */
+export const sanitizeGurmukhiText = (text: string): string => {
+    if (!text) return "";
+    // Allow: Gurmukhi block + danda/double-danda + pipe + whitespace
+    const sanitized = text
+        .replace(/[^\u0A00-\u0A7F\u0964\u0965|\s]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    return sanitized;
+};
+
 export const englishAcronymToGurmukhiRegex = (acronym: string): string => {
     const clean = acronym.toLowerCase().replace(/[^a-z]/g, "");
     if (!clean) return "";

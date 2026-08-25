@@ -2,8 +2,9 @@ import { useEffect, useRef, useCallback } from "react";
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import { cleanTranscript, isProbableNoise, toGurmukhi, attemptLocalMatch } from "@/modules/gurbani/gurbani.helper";
 import { SEARCH_CONFIG } from "@/modules/gurbani/gurbani.constants";
+import { useTempoDetector } from "@/shared/hooks/use-tempo-detector";
 import { useAppDispatch, useAppSelector } from "@/store/store.hooks";
-import { setShabadResult } from "@/store/slices/shabad.slice";
+import { setShabadResult, clearShabad } from "@/store/slices/shabad.slice";
 import { setActiveLineId } from "@/store/slices/projector.slice";
 import { setCurrentSpeech, setLastSearch, setSearchError } from "@/store/slices/search.slice";
 
@@ -38,6 +39,9 @@ export const useGurbaniProjector = () => {
         shabad: any;
         count: number;
     } | null>(null);
+
+    /** Tempo detector — measures Raagi's pace, adjusts pill-clearing timings. */
+    const { feed: feedTempo, reset: resetTempo, getTempoTimings } = useTempoDetector();
 
     const result = activeShabad && matchedLine ? { shabad: activeShabad, match: matchedLine } : null;
 
@@ -252,9 +256,8 @@ export const useGurbaniProjector = () => {
             // If only 1 stray word landed on the pill (e.g. a trailing syllable
             // separated by STT), clear it fast so it doesn't pollute the next line match.
             const incomingWordCount = transcript.trim().split(/\s+/).filter(Boolean).length;
-            const silenceMs = incomingWordCount <= 1
-                ? SEARCH_CONFIG.STRAY_WORD_FAST_CLEAR_MS
-                : SEARCH_CONFIG.SPEECH_SILENCE_RESET_MS;
+            const { silenceResetMs, strayWordClearMs } = getTempoTimings();
+            const silenceMs = incomingWordCount <= 1 ? strayWordClearMs : silenceResetMs;
             silenceTimerRef.current = setTimeout(() => {
                 // Clear stale context so the next phrase doesn't get biased
                 // toward the old shabad's words.
@@ -267,6 +270,7 @@ export const useGurbaniProjector = () => {
             // Fire a search with whatever was spoken so we still discover
             // the shabad even when lines are short.
             if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+            const { silenceResetMs } = getTempoTimings();
             silenceTimerRef.current = setTimeout(() => {
                 const lastSpoken = previousTranscriptRef.current?.replace(/\s+/g, " ").trim();
                 if (lastSpoken) {
@@ -274,13 +278,17 @@ export const useGurbaniProjector = () => {
                     searchLine(lastSpoken);
                 }
                 resetPill();
-            }, SEARCH_CONFIG.SPEECH_SILENCE_RESET_MS);
+            }, silenceResetMs);
         }
 
         previousTranscriptRef.current = transcript;
         const normalized = transcript.replace(/\s+/g, " ").trim();
         
         if (!normalized || isProbableNoise(normalized)) return;
+
+        // Feed word count into tempo detector on each new phrase
+        const incomingWc = normalized.split(/\s+/).filter(Boolean).length;
+        feedTempo(incomingWc);
 
         const words = normalized.split(/\s+/).filter(Boolean);
         const currentWc = words.length;
@@ -387,13 +395,20 @@ export const useGurbaniProjector = () => {
     const stopListening = useCallback(() => {
         SpeechRecognition.stopListening();
         clearContextBuffer();
+        resetTempo();
         resetPill();
-    }, [resetPill, clearContextBuffer]);
+    }, [resetPill, clearContextBuffer, resetTempo]);
 
     const setResult = useCallback((res: any) => {
         if (!res) {
+            // Full reset — wipe every piece of state from the previous shabad session
             clearContextBuffer();
-            dispatch(setShabadResult(null));
+            pendingLineMatchRef.current = null;   // clear confirmation gate
+            ignoreUntilRef.current = 0;           // clear post-match cooldown
+            lastShabadIdRef.current = null;        // reset shabad-change tracker
+            resetTempo();
+            dispatch(clearShabad());              // nulls activeShabad + matchedLine
+            dispatch(setActiveLineId(""));        // clear active line highlight
             resetPill();
         } else if (res.shabad && res.match) {
             const prevId = resultRef.current?.shabad?.id;
@@ -404,7 +419,7 @@ export const useGurbaniProjector = () => {
             dispatch(setShabadResult({ shabad: res.shabad, match: res.match }));
             resetPill();
         }
-    }, [dispatch, clearContextBuffer, resetPill]);
+    }, [dispatch, clearContextBuffer, resetPill, resetTempo]);
 
     return {
         result,

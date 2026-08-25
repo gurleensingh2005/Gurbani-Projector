@@ -5,7 +5,7 @@ import { env } from "@/core/config/env.config";
 import { logger } from "@/core/logger/logger.service";
 import axios from "axios";
 import { z } from "zod";
-import { getAcronym } from "@/modules/gurbani/gurbani.helper";
+import { getAcronym, sanitizeGurmukhiText } from "@/modules/gurbani/gurbani.helper";
 import {
     acquireImportLock,
     enforceImportRateLimit,
@@ -54,7 +54,10 @@ const syncShabadsFromBanidb = async (): Promise<void> => {
             for (const v of data.verses) {
                 const core = v.verse || v;
                 const t = v.translation || {};
-                const gurmukhi = safeStr(core.unicode || core.gurmukhi || v.gurmukhi);
+                const gurmukhiRaw = safeStr(core.unicode || core.gurmukhi || v.gurmukhi);
+                const gurmukhi = sanitizeGurmukhiText(gurmukhiRaw);
+                // Skip lines that are purely decorative / have no valid Gurmukhi after sanitization
+                if (!gurmukhi) continue;
                 const transliteration = safeStr(v.transliteration?.english || v.transliteration);
                 lines.push({
                     id: (v.verseId || v._id || v.id || v.verse?.id || Math.random()).toString(),
@@ -151,7 +154,10 @@ const syncAllBanisFromBanidb = async (filterSourceId?: string): Promise<void> =>
                 const core = v.verse || v;
                 const t = v.translation || {};
 
-                const gurmukhi = safeStr(core.unicode || core.gurmukhi || v.gurmukhi);
+                const gurmukhiRaw = safeStr(core.unicode || core.gurmukhi || v.gurmukhi);
+                const gurmukhi = sanitizeGurmukhiText(gurmukhiRaw);
+                // Skip lines that are purely decorative / have no valid Gurmukhi after sanitization
+                if (!gurmukhi) continue;
                 const transliteration = safeStr(v.transliteration?.english || v.transliteration);
                 lines.push({
                     id: (v.verseId || v._id || v.id || v.verse?.id || Math.random()).toString(),
