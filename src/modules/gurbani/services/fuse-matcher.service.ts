@@ -111,12 +111,18 @@ export const fuseConfidence = (fuseScore: number | undefined): number => {
 /**
  * Score query vs line using first letter of each word only.
  * exact=1.0, prefix=0.98, contains=0.95; Latin↔Gurmukhi via acronym map.
+ *
+ * @param strictPrefix - When true (discovery / initial search), the substring
+ *   `includes()` branch is disabled. Only exact or prefix (startsWith) matches
+ *   are accepted. This prevents mid-line acronym coincidences from surfacing
+ *   wrong shabads when there is no locked shabad context yet.
  */
 export const scoreFirstLetters = (
   query: string,
   lineGurmukhi: string,
   lineTranslit: string,
-  lineLarivaar?: string
+  lineLarivaar?: string,
+  strictPrefix = false
 ): number => {
   const q = (query || "").trim();
   if (!q) return 0;
@@ -130,7 +136,8 @@ export const scoreFirstLetters = (
     if (!lineGurAcr) return 0;
     if (lineGurAcr === qAcr) return 1.0;
     if (lineGurAcr.startsWith(qAcr)) return 0.98;
-    if (lineGurAcr.includes(qAcr)) return 0.95;
+    // Substring match only allowed when we have shabad context (locked mode)
+    if (!strictPrefix && lineGurAcr.includes(qAcr)) return 0.95;
     return 0;
   }
 
@@ -141,7 +148,8 @@ export const scoreFirstLetters = (
   if (lineLatAcr) {
     if (lineLatAcr === qLat) return 1.0;
     if (lineLatAcr.startsWith(qLat)) return 0.98;
-    if (lineLatAcr.includes(qLat)) return 0.95;
+    // Substring match only allowed when we have shabad context (locked mode)
+    if (!strictPrefix && lineLatAcr.includes(qLat)) return 0.95;
   }
 
   // Cross-script: Latin STT acronym vs Gurmukhi larivaar
@@ -149,7 +157,8 @@ export const scoreFirstLetters = (
     const cross = latinAcronymMatchesLarivaar(qLat, lineGurAcr);
     if (cross.exact) return 1.0;
     if (cross.prefix) return 0.98;
-    if (cross.match) return 0.95;
+    // Substring match only allowed when we have shabad context (locked mode)
+    if (!strictPrefix && cross.match) return 0.95;
     // Partial: how many leading letters align
     let aligned = 0;
     for (let i = 0; i < Math.min(qLat.length, lineGurAcr.length); i++) {

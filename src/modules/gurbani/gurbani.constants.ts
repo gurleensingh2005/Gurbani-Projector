@@ -54,15 +54,28 @@ export const SEARCH_CONFIG = {
   RATE_LIMIT_IMPORT_PER_MINUTE: 5,
 
   // STT debouncing (src/hooks/useGurbaniProjector.ts)
-  MIN_QUERY_WORDS_DISCOVERY: 5,
+  /**
+   * Absolute minimum words required before ANY search fires.
+   * 2 words + pause → pill clears silently (no search).
+   * 3 words + pause → silence timer fires a search.
+   */
+  MIN_QUERY_WORDS_DISCOVERY: 3,
   /**
    * When a shabad is already loaded, wait for this many words before firing a
    * remote search (locked-shabad line-tracking). Unchanged from original.
    */
-  MIN_QUERY_WORDS_JUMP_SHABAD: 6,
-  /** Maximum continuous words spoken on initialization before forcing immediate search without waiting for speech pause. */
-  MAX_CONTINUOUS_WORDS_FORCE_SEARCH: 8,
-  MIN_QUERY_WORDS_DISCOVERY_CONTINUOUS: 5,
+  MIN_QUERY_WORDS_JUMP_SHABAD: 4,
+  /**
+   * Continuous speech: force a search after this many words so a 16–17 word
+   * run doesn't go unmatched. Must be >= MIN_QUERY_WORDS_DISCOVERY.
+   */
+  MAX_CONTINUOUS_WORDS_FORCE_SEARCH: 6,
+  /**
+   * Cold-start continuous path: don't search until this many words have been
+   * spoken without a pause. Prevents a single-word trigger; gives the Raagi
+   * time to sing a meaningful phrase before we hit the API.
+   */
+  MIN_QUERY_WORDS_DISCOVERY_CONTINUOUS: 6,
   MAX_CONSECUTIVE_MISSES_BEFORE_DISCOVERY: 3,
   DEBOUNCE_FAST_MS: 600,
   DEBOUNCE_SLOW_MS: 1500,
@@ -99,8 +112,8 @@ export const SEARCH_CONFIG = {
     /** WPS threshold — above this the Raagi is classified as Fast. */
     FAST_MIN_WPS: 1.6,
     SLOW: { SILENCE_RESET_MS: 10_000, STRAY_CLEAR_MS: 3_000 },
-    MEDIUM: { SILENCE_RESET_MS: 6_000, STRAY_CLEAR_MS: 1_500 },
-    FAST: { SILENCE_RESET_MS: 3_500, STRAY_CLEAR_MS: 1000 },   
+    MEDIUM: { SILENCE_RESET_MS: 6_000, STRAY_CLEAR_MS: 2000},
+    FAST: { SILENCE_RESET_MS: 3_500, STRAY_CLEAR_MS: 1500 },   
   } as const,
   /**
    * Number of consecutive STT phrase matches required before committing a line

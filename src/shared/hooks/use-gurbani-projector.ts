@@ -8,6 +8,16 @@ import { setShabadResult, clearShabad } from "@/store/slices/shabad.slice";
 import { setActiveLineId } from "@/store/slices/projector.slice";
 import { setCurrentSpeech, setLastSearch, setSearchError } from "@/store/slices/search.slice";
 
+/**
+ * Mobile browsers (Chrome Android) stop the Web Speech API after each
+ * utterance even in continuous mode. react-speech-recognition auto-restarts
+ * it, causing repeated getUserMedia() calls → the green mic indicator
+ * flickers and the transcript resets mid-phrase → wrong shabad loads.
+ *
+ * We suppress any transcript that arrives within this window AFTER a restart.
+ */
+const MOBILE_RESTART_SUPPRESS_MS = 400;
+
 export const useGurbaniProjector = () => {
     const dispatch = useAppDispatch();
     const activeShabad = useAppSelector((state) => state.shabad.activeShabad);
@@ -28,6 +38,13 @@ export const useGurbaniProjector = () => {
     const contextBufferRef = useRef<string[]>([]);
     const lastShabadIdRef = useRef<string | number | null>(null);
     const lastSpeechAtRef = useRef<number>(0);
+    /**
+     * Timestamp of the last STT restart (mobile auto-restart after utterance end).
+     * Any transcript update within MOBILE_RESTART_SUPPRESS_MS of this is dropped
+     * to prevent stale/reset transcripts from triggering bad shabad loads.
+     */
+    const lastRestartAtRef = useRef<number>(0);
+    const isListeningIntentionalRef = useRef(false);
     /**
      * Confirmation buffer: counts how many consecutive STT phrases have matched
      * the same candidate line. Only dispatch when count >= MIN_LINE_MATCH_CONFIRMATIONS.
@@ -65,6 +82,21 @@ export const useGurbaniProjector = () => {
         resetTranscript,
         browserSupportsSpeechRecognition,
     } = useSpeechRecognition();
+
+    // Detect mobile auto-restarts by watching the listening state transition.
+    // On mobile, listening briefly goes false→true between utterances (the OS
+    // stops and re-acquires the mic), which is what causes the green indicator
+    // to flicker. We stamp the restart time so we can suppress the first
+    // (often stale/partial) transcript after each restart.
+    const prevListeningRef = useRef(false);
+    useEffect(() => {
+        const wasListening = prevListeningRef.current;
+        prevListeningRef.current = listening;
+        // Only care about false→true transitions while we intentionally listen
+        if (!wasListening && listening && isListeningIntentionalRef.current) {
+            lastRestartAtRef.current = Date.now();
+        }
+    }, [listening]);
 
     const scrollKey = `${result?.shabad?.id || 'none'}-${result?.match?.id || 'none'}`;
     useEffect(() => {
@@ -244,6 +276,11 @@ export const useGurbaniProjector = () => {
     useEffect(() => {
         if (!transcript || transcript === previousTranscriptRef.current) return;
         if (Date.now() < ignoreUntilRef.current) return;
+        // Suppress transcripts that arrive immediately after a mobile STT restart.
+        // On mobile, the recognition stops/restarts after each utterance — the first
+        // transcript event after restart is often a leftover partial from the previous
+        // session, which would load the wrong shabad.
+        if (Date.now() - lastRestartAtRef.current < MOBILE_RESTART_SUPPRESS_MS) return;
 
         const currentResult = resultRef.current;
         const hasActiveShabad = !!currentResult?.shabad?.lines;
@@ -304,7 +341,8 @@ export const useGurbaniProjector = () => {
         const cleanedChunk = isGurmukhiText ? chunkToSearch : chunkToSearch.split(" ").filter(w => !noiseSyllables.test(w)).join(" ");
         const cleanedWc = cleanedChunk.split(" ").filter(Boolean).length;
 
-        if (cleanedWc < 2) return;
+        // Fewer than 3 words: the silence timer will clear the pill — no search needed.
+        if (cleanedWc < 3) return;
 
         // 1. Immediate local matching if active Shabad is present (0ms delay)
         if (hasActiveShabad) {
@@ -385,6 +423,8 @@ export const useGurbaniProjector = () => {
             return;
         }
         try {
+            isListeningIntentionalRef.current = true;
+            lastRestartAtRef.current = Date.now();
             SpeechRecognition.startListening({ continuous: true, language: 'pa-IN' });
             dispatch(setSearchError(""));
         } catch (e: any) {
@@ -393,6 +433,7 @@ export const useGurbaniProjector = () => {
     }, [browserSupportsSpeechRecognition, dispatch]);
 
     const stopListening = useCallback(() => {
+        isListeningIntentionalRef.current = false;
         SpeechRecognition.stopListening();
         clearContextBuffer();
         resetTempo();

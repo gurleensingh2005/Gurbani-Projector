@@ -34,9 +34,10 @@ export const scoreLine = (
   query: string,
   lineGurmukhi: string,
   lineTranslit: string,
-  lineLarivaar?: string
+  lineLarivaar?: string,
+  strictPrefix = false
 ): number => {
-  return scoreFirstLetters(query, lineGurmukhi, lineTranslit, lineLarivaar);
+  return scoreFirstLetters(query, lineGurmukhi, lineTranslit, lineLarivaar, strictPrefix);
 };
 
 const extractLineTexts = (
@@ -226,7 +227,8 @@ const applyWindowEndLineBonus = (
   windowDoc: FuseWindowDoc,
   shabad: Record<string, unknown>,
   spokenQuery: string,
-  baseConfidence: number
+  baseConfidence: number,
+  strictPrefix = false
 ): number => {
   let score = Math.min(1, baseConfidence + SEARCH_CONFIG.CONTEXT_ALIGN_BONUS);
   const rawLines = (shabad.lines as RawLineLike[]) || [];
@@ -234,7 +236,7 @@ const applyWindowEndLineBonus = (
   if (!endLine) return score;
 
   const { gurmukhi, translit, larivaar } = extractLineTexts(endLine);
-  const endAlign = scoreLine(spokenQuery, gurmukhi, translit, larivaar);
+  const endAlign = scoreLine(spokenQuery, gurmukhi, translit, larivaar, strictPrefix);
   // Bonus when spoken line is exact/prefix/substring of window end
   if (endAlign >= 0.95) {
     score = Math.min(1, score + SEARCH_CONFIG.CONTEXT_END_LINE_BONUS);
@@ -463,8 +465,36 @@ const evaluateDiscoverySingleLine = (
     return null;
   }
 
+  // ── Discovery prefix guard ──────────────────────────────────────────────────
+  // Fuse uses fuzzy (approximate) matching and ignores location, so it can
+  // return a "match" even when the query acronym appears only in the MIDDLE of
+  // a longer line's larivaar (e.g. "hghg" inside "...hghgxyz...").
+  // For initial search we require the line to actually START with the query
+  // acronym — a pure prefix relationship — to avoid false positives.
   const shabad = findShabadById(shabadsArray, fuseHit.doc.shabadId);
   if (!shabad) return null;
+
+  const rawLines = (shabad.lines as RawLineLike[]) || [];
+  const hitLine = rawLines[fuseHit.doc.lineIndex];
+  if (hitLine) {
+    const { gurmukhi, translit, larivaar } = extractLineTexts(hitLine as RawLineLike);
+    // scoreFirstLetters with strictPrefix=true rejects includes() / mid-string matches
+    const prefixScore = scoreLine(query, gurmukhi, translit, larivaar, true /* strictPrefix */);
+    if (prefixScore <= 0) {
+      logger.info(
+        {
+          event: "search_discovery_prefix_guard_rejected",
+          fuseScore: fuseHit.fuseScore,
+          confidence: fuseHit.confidence,
+          lineIndex: fuseHit.doc.lineIndex,
+          shabadId: fuseHit.doc.shabadId,
+        },
+        "Discovery Fuse hit rejected — acronym not a prefix of line larivaar"
+      );
+      return null;
+    }
+  }
+  // ───────────────────────────────────────────────────────────────────────────
 
   logger.info(
     {
@@ -504,11 +534,13 @@ export const evaluateDiscovery = (
     if (windowHit) {
       const shabad = findShabadById(shabadsArray, windowHit.doc.shabadId);
       if (shabad) {
+        // strictPrefix=true: discovery must not match acronyms mid-string
         const score = applyWindowEndLineBonus(
           windowHit.doc,
           shabad,
           query,
-          windowHit.confidence
+          windowHit.confidence,
+          true /* strictPrefix */
         );
         if (score >= SEARCH_CONFIG.DISCOVERY_WINDOW_MIN_CONFIDENCE) {
           logger.info(

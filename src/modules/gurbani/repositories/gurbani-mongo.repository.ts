@@ -69,8 +69,10 @@ export const searchShabadsByFirstLetters = async (
     const acr = getAcronym(query);
     if (acr.length < SEARCH_CONFIG.ACRONYM_MIN_LENGTH) return [];
     // Escape regex specials in Gurmukhi acronym (usually none)
+    // Anchor with ^ so Mongo only returns lines that START with the query
+    // acronym — prevents mid-string hits (e.g. "hghg" inside "...hghgxyz...").
     const escaped = acr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    larivaarRegex = escaped;
+    larivaarRegex = `^${escaped}`;
   } else {
     const latin = getLatinAcronym(query);
     if (latin.length < SEARCH_CONFIG.ACRONYM_MIN_LENGTH) return [];
